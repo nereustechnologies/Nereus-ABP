@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "2308731082",
+    "project_id": "abpnereus",
+    "storage_bucket": "abpnereus.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:2308731082:android:f704db534ddd6d5bcf0433",
+        "android_client_info": {
+          "package_name": "com.example.nereus_abp_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBfeffLtFQmnXyuHfTl6232YMXIvmJn5JI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
