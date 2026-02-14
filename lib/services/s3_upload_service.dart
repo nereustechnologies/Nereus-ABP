@@ -8,8 +8,8 @@ import 'package:aws_s3_api/s3-2006-03-01.dart';
 class S3UploadService {
   static const String region = "us-east-1";
   static const String bucketName = "nereus-abp";
-  static const String accessKey = "AKIA5CK6AL244FQYVWAK";
-  static const String secretKey = "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";
+  static const String accessKey = "ACCESS_KEY";
+  static const String secretKey = "SECRET";
 
   static Future<String> uploadCsv({
     required File file,
