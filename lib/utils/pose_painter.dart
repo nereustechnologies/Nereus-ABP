@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 
 class PosePainter extends CustomPainter {
@@ -14,23 +15,68 @@ class PosePainter extends CustomPainter {
   });
 
   Offset _transformPoint(double x, double y, Size size) {
+    // ✅ Keep Android behavior EXACTLY as you had it (so you don't break Android)
+    if (!Platform.isIOS) {
+      
+      double px;
+      double py;
+
+      switch (rotation) {
+        case 90:
+          px = y;
+          py = x;
+          break;
+
+        case 270:
+          px = 1 - y;
+          py = 1 - x;
+          break;
+
+        case 180:
+          px = 1 - x;
+          py = y;
+          break;
+
+        case 0:
+        default:
+          px = x;
+          py = y;
+          break;
+      }
+
+      // Always flip X because CameraPreview is mirrored internally (your existing assumption)
+      px = 1 - px;
+
+      // Mirror ONLY for front camera (net effect: front camera cancels the flip)
+      if (isFrontCamera) {
+        px = 1 - px;
+      }
+
+      return Offset(px * size.width, py * size.height);
+    }
+
+    // ✅ iOS fix: correct rotation mapping + mirror rule
     double px;
     double py;
+    int rot = rotation;
 
-    switch (rotation) {
+    switch (rot) {
       case 90:
-        px = y;
-        py = x;
+        // Rotate 90° CW: (x, y) -> (y, 1 - x)
+        px = x;
+        py = y;
         break;
 
       case 270:
+        // Rotate 270° CW (90° CCW): (x, y) -> (1 - y, x)
         px = 1 - y;
-        py = 1 - x;
+        py = x;
         break;
 
       case 180:
+        // Rotate 180°: (x, y) -> (1 - x, 1 - y)
         px = 1 - x;
-        py = y;
+        py = 1 - y;
         break;
 
       case 0:
@@ -40,13 +86,10 @@ class PosePainter extends CustomPainter {
         break;
     }
 
-    // Always flip X because CameraPreview is mirrored internally
-    px = 1 - px;
-
-    // Mirror ONLY for front camera
-    if (isFrontCamera) {
-      px = 1 - px;
-    }
+    // On iOS, mirror ONLY for front camera (typical preview behavior)
+    //if (isFrontCamera) {
+      //px = 1 - px;
+    //}
 
     return Offset(px * size.width, py * size.height);
   }

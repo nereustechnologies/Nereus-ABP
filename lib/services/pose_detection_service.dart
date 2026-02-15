@@ -14,23 +14,32 @@ class PoseDetectionService {
         "📡 Sending to native | w=${image.width} h=${image.height} rot=$rotation",
       );
 
-      final result = await _channel.invokeMethod("detectPoseStream", {
+      final planes = image.planes;
+
+      final args = <String, dynamic>{
         "width": image.width,
         "height": image.height,
         "rotation": rotation,
         "timestamp": DateTime.now().millisecondsSinceEpoch,
 
-        "plane0": image.planes[0].bytes,
-        "plane1": image.planes[1].bytes,
-        "plane2": image.planes[2].bytes,
+        "plane0": planes[0].bytes,
+        "plane1": planes[1].bytes,
 
-        "stride0": image.planes[0].bytesPerRow,
-        "stride1": image.planes[1].bytesPerRow,
-        "stride2": image.planes[2].bytesPerRow,
+        "stride0": planes[0].bytesPerRow,
+        "stride1": planes[1].bytesPerRow,
 
-        "pixelStride1": image.planes[1].bytesPerPixel,
-        "pixelStride2": image.planes[2].bytesPerPixel,
-      });
+        "pixelStride1": planes[1].bytesPerPixel,
+      };
+
+      // Only on Android (or any device with 3 planes)
+      if (planes.length > 2) {
+        args["plane2"] = planes[2].bytes;
+        args["stride2"] = planes[2].bytesPerRow;
+        args["pixelStride2"] = planes[2].bytesPerPixel;
+      }
+
+      final result = await _channel.invokeMethod("detectPoseStream", args);
+
 
       if (result == null) return [];
 
