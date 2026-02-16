@@ -17,6 +17,8 @@ class CsvExportService {
       "Timestamp",
       "Frame Number",
       "Exercise Name",
+      "Heart Rate",
+      "RR Intervals",
       ...firstFrame.angles.keys,
     ];
 
@@ -28,11 +30,16 @@ class CsvExportService {
         frame.timestamp.toIso8601String(),
         frame.frameNumber,
         frame.exerciseName,
-        ...headers.skip(3).map((key) => frame.angles[key] ?? ""),
+        frame.hr ?? "",
+        frame.rr,
+        ...headers
+            .skip(5)
+            .map((key) => frame.angles[key] ?? ""),
       ]);
     }
 
-    final csvString = const ListToCsvConverter().convert(rows);
+    final csvString =
+        const ListToCsvConverter().convert(rows);
 
     final dir = await getTemporaryDirectory();
 

@@ -10,6 +10,7 @@ import 'camera_screen.dart';
 import '../services/exercise_data_recorder.dart';
 import '../services/csv_export_service.dart';
 import '../services/s3_upload_service.dart';
+import '../services/polar_data_service.dart';
 
 class AbpSessionRunner extends StatefulWidget {
   final String userId;
@@ -52,13 +53,10 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
 
   static const int minFramesRequired = 5;
 
-  // ==============================
-  // INIT
-  // ==============================
-
   @override
   void initState() {
     super.initState();
+    PolarDataService.instance.reset();
     _createSession();
   }
 
@@ -67,10 +65,6 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
     _timer?.cancel();
     super.dispose();
   }
-
-  // ==============================
-  // CREATE SESSION
-  // ==============================
 
   Future<void> _createSession() async {
     try {
@@ -103,10 +97,6 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
     }
   }
 
-  // ==============================
-  // SESSION CONTROL
-  // ==============================
-
   void _pauseSession() {
     _timer?.cancel();
 
@@ -128,10 +118,6 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
       _resumeExerciseTimer();
     }
   }
-
-  // ==============================
-  // COUNTDOWN
-  // ==============================
 
   void _startCountdown() {
     _timer?.cancel();
@@ -169,10 +155,6 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
       }
     });
   }
-
-  // ==============================
-  // CAMERA PHASE
-  // ==============================
 
   void _startCameraPhase() {
     recorder.clear();
@@ -221,10 +203,6 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
     });
   }
 
-  // ==============================
-  // EXPORT + UPLOAD + DB INSERT
-  // ==============================
-
   Future<void> _finishExerciseAndGoNext() async {
     try {
       if (sessionId == null) {
@@ -249,6 +227,8 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
           .replaceAll(" ", "_")
           .replaceAll("/", "_")
           .replaceAll(":", "_");
+
+      debugPrint("🔧 _finishExerciseAndGoNext: uploading CSV for userId=${widget.userId}, sessionId=$sessionId, exerciseId=$exerciseId");
 
       final uploadedKey = await S3UploadService.uploadCsv(
         file: csvFile,
@@ -283,10 +263,6 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
     await _goToNextStep();
   }
 
-  // ==============================
-  // COMPLETE SESSION
-  // ==============================
-
   Future<void> _completeSession() async {
     final id = sessionId;
     if (id == null) return;
@@ -301,10 +277,6 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
       debugPrint("❌ Failed to update session completion: $e");
     }
   }
-
-  // ==============================
-  // NEXT STEP
-  // ==============================
 
   Future<void> _goToNextStep() async {
     if (currentStepIndex >= abpSteps.length - 1) {
@@ -333,10 +305,6 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
     _startCountdown();
   }
 
-  // ==============================
-  // ANGLE FILTER
-  // ==============================
-
   Map<String, double> _sanitizeAngles(Map<String, double> angles) {
     final clean = <String, double>{};
 
@@ -352,10 +320,6 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
 
     return clean;
   }
-
-  // ==============================
-  // UI
-  // ==============================
 
   @override
   Widget build(BuildContext context) {
