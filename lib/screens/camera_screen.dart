@@ -55,6 +55,7 @@ class _PoseCameraViewState extends State<PoseCameraView> {
   void initState() {
     super.initState();
     debugPrint("📷 PoseCameraView init");
+    PoseAngleUtils.reset();
     _initializeCamera();
   }
 
@@ -118,7 +119,7 @@ class _PoseCameraViewState extends State<PoseCameraView> {
           _isDetecting = false;
           return;
         }
-
+        
         final angles = PoseAngleUtils.calculateAllAngles(landmarks);
 
         if (!mounted || _isClosing) {
@@ -197,7 +198,7 @@ class _PoseCameraViewState extends State<PoseCameraView> {
         _controller?.dispose();
       } catch (_) {}
     });
-
+    PoseAngleUtils.reset();
     super.dispose();
   }
 

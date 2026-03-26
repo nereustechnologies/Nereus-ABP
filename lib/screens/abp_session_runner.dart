@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -24,17 +23,15 @@ class AbpSessionRunner extends StatefulWidget {
 class _AbpSessionRunnerState extends State<AbpSessionRunner> {
   int currentStepIndex = 0;
 
-  bool isCountingDown = true;
   bool showCameraMode = false;
   bool isPaused = false;
   bool isSessionCreating = true;
 
-  int countdown = 5;
-  int timerSeconds = 0;
+  bool hasStartedExercise = false;
+  bool showResumeButton = false;
 
-  Timer? _timer;
-
-  AbpStep get step => abpSteps[currentStepIndex];
+  bool isFinishingStep = false;
+  bool isSavingExercise = false;
 
   final ExerciseDataRecorder recorder = ExerciseDataRecorder();
 
@@ -44,26 +41,22 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
   final supabase = Supabase.instance.client;
 
   DateTime? lastPoseTime;
+
+  AbpStep get step => abpSteps[currentStepIndex];
+
+  static const int minFramesRequired = 5;
+
   bool get isPoseMissing {
     if (!showCameraMode) return false;
     if (lastPoseTime == null) return true;
-
     return DateTime.now().difference(lastPoseTime!).inSeconds >= 2;
   }
-
-  static const int minFramesRequired = 5;
 
   @override
   void initState() {
     super.initState();
     PolarDataService.instance.reset();
     _createSession();
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
   }
 
   Future<void> _createSession() async {
@@ -79,168 +72,110 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
 
       sessionId = sessionRow["id"];
 
-      debugPrint("✅ Session Created: $sessionId");
+      if (!mounted) return;
 
       setState(() {
         isSessionCreating = false;
       });
-
-      _startCountdown();
     } catch (e) {
-      debugPrint("❌ Failed to create session: $e");
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Failed to start session: $e")),
-        );
-      }
+      debugPrint("Failed to create session $e");
     }
+  }
+
+  void _resetExerciseCapture({required bool clearFrames}) {
+    lastPoseTime = null;
+    isFinishingStep = false;
+
+    if (clearFrames) {
+      recorder.clear();
+    }
+  }
+
+  void _startExercise() {
+    _resetExerciseCapture(clearFrames: true);
+
+    setState(() {
+      hasStartedExercise = true;
+      isPaused = false;
+      showCameraMode = true;
+      showResumeButton = false;
+    });
+  }
+
+  void _resumeExercise() {
+    _resetExerciseCapture(clearFrames: false);
+
+    setState(() {
+      hasStartedExercise = true;
+      isPaused = false;
+      showCameraMode = true;
+    });
   }
 
   void _pauseSession() {
-    _timer?.cancel();
-
     setState(() {
       isPaused = true;
       showCameraMode = false;
+      showResumeButton = true;
     });
   }
 
-  void _resumeSession() {
-    setState(() {
-      isPaused = false;
-    });
-
-    if (isCountingDown) {
-      _resumeCountdown();
-    } else {
-      setState(() => showCameraMode = true);
-      _resumeExerciseTimer();
-    }
-  }
-
-  void _startCountdown() {
-    _timer?.cancel();
+  Future<void> _onNextPressed() async {
+    if (isFinishingStep) return;
 
     setState(() {
-      isCountingDown = true;
+      isFinishingStep = true;
+      isSavingExercise = true;
       showCameraMode = false;
-      countdown = step.countdownSeconds;
-      isPaused = false;
     });
 
-    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (isPaused) return;
+    await Future.delayed(const Duration(milliseconds: 50));
 
-      if (countdown <= 1) {
-        t.cancel();
-        _startCameraPhase();
-      } else {
-        setState(() => countdown--);
-      }
-    });
+    _finishExerciseAsync();
   }
 
-  void _resumeCountdown() {
-    _timer?.cancel();
-
-    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (isPaused) return;
-
-      if (countdown <= 1) {
-        t.cancel();
-        _startCameraPhase();
-      } else {
-        setState(() => countdown--);
-      }
-    });
-  }
-
-  void _startCameraPhase() {
-    recorder.clear();
-    lastPoseTime = null;
-
-    setState(() {
-      isCountingDown = false;
-      showCameraMode = true;
-      timerSeconds = step.durationSeconds;
-    });
-
-    _timer?.cancel();
-
-    _timer = Timer.periodic(const Duration(seconds: 1), (t) async {
-      if (isPaused) return;
-
-      if (timerSeconds <= 1) {
-        t.cancel();
-
-        setState(() => showCameraMode = false);
-
-        await Future.delayed(const Duration(milliseconds: 100));
-        await _finishExerciseAndGoNext();
-      } else {
-        setState(() => timerSeconds--);
-      }
-    });
-  }
-
-  void _resumeExerciseTimer() {
-    _timer?.cancel();
-
-    _timer = Timer.periodic(const Duration(seconds: 1), (t) async {
-      if (isPaused) return;
-
-      if (timerSeconds <= 1) {
-        t.cancel();
-
-        setState(() => showCameraMode = false);
-
-        await Future.delayed(const Duration(milliseconds: 100));
-        await _finishExerciseAndGoNext();
-      } else {
-        setState(() => timerSeconds--);
-      }
-    });
-  }
-
-  Future<void> _finishExerciseAndGoNext() async {
+  Future<void> _finishExerciseAsync() async {
     try {
-      if (sessionId == null) {
-        debugPrint("❌ No sessionId, skipping exercise save.");
+      final id = sessionId;
+
+      if (id == null) {
         await _goToNextStep();
         return;
       }
 
       if (recorder.frames.length < minFramesRequired) {
-        debugPrint("⚠️ Not enough frames (${recorder.frames.length}), skipping.");
-        lastUploadedCsvKey = null;
         recorder.clear();
         await _goToNextStep();
         return;
       }
 
+      final framesCopy = List.of(recorder.frames);
+
       final csvFile = await CsvExportService.exportExerciseCsv(
-        frames: recorder.frames,
+        frames: framesCopy,
       );
 
-      final exerciseId = "${step.blockName}_${step.exerciseName}"
-          .replaceAll(" ", "_")
-          .replaceAll("/", "_")
-          .replaceAll(":", "_");
+      String sanitize(String s) {
+        return s
+            .replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_')
+            .replaceAll(RegExp(r'_+'), '_');
+      }
 
-      debugPrint("🔧 _finishExerciseAndGoNext: uploading CSV for userId=${widget.userId}, sessionId=$sessionId, exerciseId=$exerciseId");
+      final exerciseId = sanitize("${step.blockName}_${step.exerciseName}");
 
-      final uploadedKey = await S3UploadService.uploadCsv(
+      final uploadFuture = S3UploadService.uploadCsv(
         file: csvFile,
         userId: widget.userId,
-        sessionId: sessionId!,
+        sessionId: id,
         exerciseId: exerciseId,
       );
+
+      final uploadedKey = await uploadFuture;
 
       final fileSize = await csvFile.length();
 
       await supabase.from("exercises").insert({
-        "session_id": sessionId!,
+        "session_id": id,
         "block_number": currentStepIndex,
         "block_name": step.blockName,
         "exercise_name": step.exerciseName,
@@ -248,18 +183,29 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
         "s3_bucket": S3UploadService.bucketName,
         "s3_key": uploadedKey,
         "file_size_bytes": fileSize,
-        "frame_count": recorder.frames.length,
+        "frame_count": framesCopy.length,
       });
 
       lastUploadedCsvKey = uploadedKey;
-
-      debugPrint("✅ Exercise saved to DB");
     } catch (e) {
-      debugPrint("❌ Error during export/upload/db insert: $e");
-      lastUploadedCsvKey = null;
+      debugPrint("Save error $e");
     }
 
     recorder.clear();
+
+    await _goToNextStep();
+  }
+
+  Future<void> _onSkipPressed() async {
+    if (isFinishingStep) return;
+
+    setState(() {
+      isFinishingStep = true;
+      showCameraMode = false;
+    });
+
+    recorder.clear();
+
     await _goToNextStep();
   }
 
@@ -267,21 +213,15 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
     final id = sessionId;
     if (id == null) return;
 
-    try {
-      await supabase.from("sessions").update({
-        "completed_at": DateTime.now().toIso8601String(),
-      }).eq("id", id);
-
-      debugPrint("✅ Session marked complete");
-    } catch (e) {
-      debugPrint("❌ Failed to update session completion: $e");
-    }
+    await supabase.from("sessions").update({
+      "completed_at": DateTime.now().toIso8601String(),
+    }).eq("id", id);
   }
 
   Future<void> _goToNextStep() async {
     if (currentStepIndex >= abpSteps.length - 1) {
       await _completeSession();
-      Navigator.pop(context);
+      if (mounted) Navigator.pop(context);
       return;
     }
 
@@ -290,19 +230,29 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
       MaterialPageRoute(
         builder: (_) => AbpTransitionScreen(
           title: "Exercise Complete",
-          message: "Take your time. Continue when ready.",
+          message: "Continue when ready.",
           csvKey: lastUploadedCsvKey,
         ),
       ),
     );
 
+    if (!mounted) return;
+
     setState(() {
       currentStepIndex++;
-      isPaused = false;
-      lastUploadedCsvKey = null;
-    });
 
-    _startCountdown();
+      recorder.clear();
+      lastPoseTime = null;
+
+      showCameraMode = false;
+      isPaused = false;
+
+      hasStartedExercise = false;
+      showResumeButton = false;
+
+      isSavingExercise = false;
+      isFinishingStep = false;
+    });
   }
 
   Map<String, double> _sanitizeAngles(Map<String, double> angles) {
@@ -332,64 +282,55 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
       );
     }
 
+    if (isSavingExercise) {
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(color: Colors.white),
+              SizedBox(height: 20),
+              Text(
+                "Saving exercise...",
+                style: TextStyle(color: Colors.white),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
         child: Stack(
           children: [
-            // CAMERA MODE
             if (showCameraMode)
               Positioned.fill(
                 child: PoseCameraView(
                   onClose: _pauseSession,
                   onAngles: (angles) {
-                    if (!isPaused && showCameraMode) {
-                      final cleanAngles = _sanitizeAngles(angles);
+                    if (isFinishingStep) return;
+                    if (isPaused) return;
+                    if (!showCameraMode) return;
 
-                      if (cleanAngles.isEmpty) return;
+                    final cleanAngles = _sanitizeAngles(angles);
 
-                      lastPoseTime = DateTime.now();
+                    if (cleanAngles.isEmpty) return;
 
-                      recorder.recordFrame(
-                        exerciseName: step.exerciseName,
-                        angles: cleanAngles,
-                      );
+                    lastPoseTime = DateTime.now();
 
-                      setState(() {});
-                    }
+                    recorder.recordFrame(
+                      exerciseName: step.exerciseName,
+                      angles: cleanAngles,
+                    );
+
+                    if (mounted) setState(() {});
                   },
                 ),
               ),
 
-            // WARNING OVERLAY IF NO POSE
-            if (showCameraMode && isPoseMissing)
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 18,
-                        vertical: 14,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.redAccent.withOpacity(0.85),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: const Text(
-                        "⚠️ No pose detected.\nStep into frame.",
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-
-            // INSTRUCTION MODE
             if (!showCameraMode)
               Positioned.fill(
                 child: Padding(
@@ -429,88 +370,53 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
                       const Spacer(),
 
                       _bigCounter(
-                        isCountingDown
-                            ? "Starting in"
-                            : (isPaused ? "Paused" : "Time Remaining"),
-                        isCountingDown
-                            ? countdown.toString()
-                            : timerSeconds.toString(),
+                        "Frames",
+                        recorder.frames.length.toString(),
                       ),
 
                       const SizedBox(height: 20),
 
                       Row(
                         children: [
-                          Expanded(
-                            child: SizedBox(
-                              height: 50,
+                          if (showResumeButton)
+                            Expanded(
                               child: ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.white12,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                ),
-                                onPressed: () {
-                                  if (isPaused) {
-                                    _resumeSession();
-                                  } else {
-                                    _pauseSession();
-                                  }
-                                },
-                                child: Text(
-                                  isPaused ? "Resume" : "Pause",
-                                  style: const TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
-                                    color: Colors.white,
-                                  ),
-                                ),
+                                onPressed: _resumeExercise,
+                                child: const Text("Resume"),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 12),
+
+                          if (showResumeButton) const SizedBox(width: 12),
+
                           Expanded(
-                            child: SizedBox(
-                              height: 50,
-                              child: ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.blueAccent,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                ),
-                                onPressed: () async {
-                                  _timer?.cancel();
-
-                                  setState(() {
-                                    showCameraMode = false;
-                                  });
-
-                                  await Future.delayed(
-                                    const Duration(milliseconds: 100),
-                                  );
-
-                                  await _finishExerciseAndGoNext();
-                                },
-                                child: const Text(
-                                  "Skip",
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
+                            child: ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
                               ),
+                              onPressed: _startExercise,
+                              child: const Text("Start"),
                             ),
                           ),
                         ],
+                      ),
+
+                      const SizedBox(height: 12),
+
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue,
+                          ),
+                          onPressed: _onSkipPressed,
+                          child: const Text("Skip"),
+                        ),
                       ),
                     ],
                   ),
                 ),
               ),
 
-            // BOTTOM OVERLAY
             if (showCameraMode) _bottomOverlay(),
           ],
         ),
@@ -533,25 +439,11 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
           child: ListView(
             controller: controller,
             children: [
-              Center(
-                child: Container(
-                  width: 50,
-                  height: 5,
-                  decoration: BoxDecoration(
-                    color: Colors.white24,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 14),
-
               Text(
                 step.exerciseName,
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 18,
-                  fontWeight: FontWeight.w600,
                 ),
                 textAlign: TextAlign.center,
               ),
@@ -559,8 +451,8 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
               const SizedBox(height: 14),
 
               _bigCounter(
-                isPaused ? "Paused" : "Time Remaining",
-                timerSeconds.toString(),
+                "Frames",
+                recorder.frames.length.toString(),
               ),
 
               const SizedBox(height: 14),
@@ -568,94 +460,25 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
               Row(
                 children: [
                   Expanded(
-                    child: SizedBox(
-                      height: 50,
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white12,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                        ),
-                        onPressed: () {
-                          if (isPaused) {
-                            _resumeSession();
-                          } else {
-                            _pauseSession();
-                          }
-                        },
-                        child: Text(
-                          isPaused ? "Resume" : "Pause",
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white,
-                          ),
-                        ),
+                    child: ElevatedButton(
+                      onPressed: _onNextPressed,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
                       ),
+                      child: const Text("Next"),
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: SizedBox(
-                      height: 50,
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.blueAccent,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                        ),
-                        onPressed: () async {
-                          _timer?.cancel();
-
-                          setState(() {
-                            showCameraMode = false;
-                          });
-
-                          await Future.delayed(
-                            const Duration(milliseconds: 100),
-                          );
-
-                          await _finishExerciseAndGoNext();
-                        },
-                        child: const Text(
-                          "Skip",
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
                       ),
+                      onPressed: _onSkipPressed,
+                      child: const Text("Skip"),
                     ),
                   ),
                 ],
-              ),
-
-              const SizedBox(height: 10),
-
-              Center(
-                child: Text(
-                  isPoseMissing
-                      ? "⚠️ Pose not detected"
-                      : "Pose tracking active",
-                  style: TextStyle(
-                    color: isPoseMissing ? Colors.redAccent : Colors.white60,
-                    fontSize: 12,
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 10),
-
-              Center(
-                child: Text(
-                  "Frames captured: ${recorder.frames.length}",
-                  style: const TextStyle(
-                    color: Colors.white38,
-                    fontSize: 11,
-                  ),
-                ),
               ),
             ],
           ),
@@ -669,10 +492,7 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
       children: [
         Text(
           label,
-          style: const TextStyle(
-            color: Colors.white54,
-            fontSize: 12,
-          ),
+          style: const TextStyle(color: Colors.white54),
         ),
         const SizedBox(height: 8),
         Text(

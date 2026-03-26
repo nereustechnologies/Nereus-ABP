@@ -25,11 +25,13 @@ class PolarDataService {
   BluetoothDevice? get connectedDevice => _connectedDevice;
 
   // ==========================
-  // Internal state storage
+  // Internal state
   // ==========================
 
   int _latestHr = 0;
   List<double> _latestRr = [];
+
+  DateTime _lastUpdate = DateTime.now();
 
   int get latestHr => _latestHr;
   List<double> get latestRr => List.unmodifiable(_latestRr);
@@ -41,6 +43,9 @@ class PolarDataService {
     };
   }
 
+  bool get isStale =>
+      DateTime.now().difference(_lastUpdate).inSeconds > 5;
+
   void reset() {
     _latestHr = 0;
     _latestRr = [];
@@ -51,15 +56,21 @@ class PolarDataService {
   // ==========================
 
   Future<void> connect(BluetoothDevice device) async {
-    if (_connectedDevice != null) return;
+    if (_connectedDevice?.isConnected ?? false) {
+      debugPrint("Polar already connected");
+      return;
+    }
 
-    await device.connect(timeout: const Duration(seconds: 15));
+    try {
+      await device.connect(timeout: const Duration(seconds: 15));
+      _connectedDevice = device;
 
-    _connectedDevice = device;
+      await _subscribeHeartRate(device);
 
-    await _subscribeHeartRate(device);
-
-    debugPrint("Connected to ${device.platformName}");
+      debugPrint("Connected to ${device.platformName}");
+    } catch (e) {
+      debugPrint("Connection error: $e");
+    }
   }
 
   // ==========================
@@ -128,23 +139,24 @@ class PolarDataService {
 
     await _hrCharacteristic!.setNotifyValue(true);
 
-    _hrSub = _hrCharacteristic!.onValueReceived.listen((value) {
+    await _hrSub?.cancel();
+
+    _hrSub = _hrCharacteristic!.lastValueStream.listen((value) {
       final parsed = _parseHeartRate(value);
       final hr = parsed['hr'] as int;
       final rr = parsed['rr'] as List<double>;
 
-      // Store latest
       _latestHr = hr;
       _latestRr = rr;
+      _lastUpdate = DateTime.now();
 
-      // Emit streams
       _hrController.add(hr);
       _rrController.add(rr);
 
       if (rr.isNotEmpty) {
-        debugPrint("❤️ HR: $hr bpm | RR: $rr");
+        // debugPrint("❤️ HR: $hr bpm | RR: $rr");
       } else {
-        debugPrint("❤️ HR: $hr bpm");
+        // debugPrint("❤️ HR: $hr bpm");
       }
     });
 

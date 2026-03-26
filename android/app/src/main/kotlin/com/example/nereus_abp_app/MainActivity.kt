@@ -1,7 +1,6 @@
 package com.example.nereus_abp_app
 
 import android.graphics.Bitmap
-import android.graphics.Matrix
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -22,7 +21,9 @@ class MainActivity : FlutterActivity() {
 
     private lateinit var yuvConverter: FastYuvToRgbConverter
     private var rgbBitmap: Bitmap? = null
-    private var rotatedBitmap: Bitmap? = null
+
+    // 🔥 Person tracking state
+    private var lastCenter: Pair<Float, Float>? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -42,8 +43,7 @@ class MainActivity : FlutterActivity() {
 
                 val width = call.argument<Int>("width") ?: 0
                 val height = call.argument<Int>("height") ?: 0
-                val rotation = call.argument<Int>("rotation") ?: 0
-                val timestamp = call.argument<Long>("timestamp") ?: 0L
+                val timestamp = call.argument<Long>("timestamp") ?: System.currentTimeMillis()
 
                 val yBytes = call.argument<ByteArray>("plane0")
                 val uBytes = call.argument<ByteArray>("plane1")
@@ -56,12 +56,18 @@ class MainActivity : FlutterActivity() {
                 val pixelStride1 = call.argument<Int>("pixelStride1") ?: 1
                 val pixelStride2 = call.argument<Int>("pixelStride2") ?: 1
 
+                if (width <= 0 || height <= 0) {
+                    result.error("INVALID_SIZE", "Invalid frame size: ${width}x$height", null)
+                    return@setMethodCallHandler
+                }
+
                 if (yBytes == null || uBytes == null || vBytes == null) {
                     result.error("NO_PLANES", "Missing YUV planes", null)
                     return@setMethodCallHandler
                 }
 
                 try {
+                    // Create bitmap if needed
                     if (rgbBitmap == null ||
                         rgbBitmap!!.width != width ||
                         rgbBitmap!!.height != height
@@ -73,6 +79,7 @@ class MainActivity : FlutterActivity() {
                         )
                     }
 
+                    // Convert YUV → RGB
                     yuvConverter.yuv420ToBitmap(
                         yBytes,
                         uBytes,
@@ -88,6 +95,8 @@ class MainActivity : FlutterActivity() {
                     )
 
                     val mpImage = BitmapImageBuilder(rgbBitmap!!).build()
+
+                    // 🔥 Async detection (FAST)
                     poseLandmarker?.detectAsync(mpImage, timestamp)
 
                     val detectionResult = latestResult
@@ -97,15 +106,38 @@ class MainActivity : FlutterActivity() {
                         detectionResult.landmarks().isNotEmpty()
                     ) {
                         val pose = detectionResult.landmarks()[0]
+
+                        // 🔥 Compute stable torso center
+                        val centerX =
+                            (pose[11].x() + pose[12].x() + pose[23].x() + pose[24].x()) / 4f
+                        val centerY =
+                            (pose[11].y() + pose[12].y() + pose[23].y() + pose[24].y()) / 4f
+
+                        val center = Pair(centerX, centerY)
+
+                        // 🔥 Identity lock check
+                        if (!isSamePerson(center)) {
+                            Log.d(TAG, "Ignoring frame: different person detected")
+                            result.success(emptyList<Map<String, Any>>())
+                            return@setMethodCallHandler
+                        }
+
+                        // 🔥 Update tracked center
+                        lastCenter = center
+
                         for (lm in pose) {
                             output.add(
                                 mapOf(
                                     "x" to lm.x(),
                                     "y" to lm.y(),
-                                    "z" to lm.z()
+                                    "z" to lm.z(),
+                                    "visibility" to lm.visibility().orElse(0f)
                                 )
                             )
                         }
+                    } else {
+                        // 🔥 Reset tracking if lost
+                        lastCenter = null
                     }
 
                     result.success(output)
@@ -128,11 +160,11 @@ class MainActivity : FlutterActivity() {
             .setBaseOptions(baseOptions)
             .setRunningMode(RunningMode.LIVE_STREAM)
             .setNumPoses(1)
-            .setMinPoseDetectionConfidence(0.5f)
-            .setMinPosePresenceConfidence(0.5f)
-            .setResultListener { result: PoseLandmarkerResult, _: com.google.mediapipe.framework.image.MPImage ->
+            .setMinPoseDetectionConfidence(0.6f)
+            .setMinTrackingConfidence(0.6f)
+            .setMinPosePresenceConfidence(0.6f)
+            .setResultListener { result: PoseLandmarkerResult, _ ->
                 latestResult = result
-                Log.d(TAG, "Result listener fired. Poses=${result.landmarks().size}")
             }
             .setErrorListener { e: RuntimeException ->
                 Log.e(TAG, "MediaPipe error", e)
@@ -140,13 +172,27 @@ class MainActivity : FlutterActivity() {
             .build()
 
         poseLandmarker = PoseLandmarker.createFromOptions(this, options)
+        Log.d(TAG, "PoseLandmarker initialized")
+    }
+
+    // 🔥 Lightweight identity lock
+    private fun isSamePerson(newCenter: Pair<Float, Float>): Boolean {
+        val prev = lastCenter ?: return true
+
+        val dx = kotlin.math.abs(newCenter.first - prev.first)
+        val dy = kotlin.math.abs(newCenter.second - prev.second)
+
+        return dx < 0.15f && dy < 0.15f
     }
 
     override fun onDestroy() {
         super.onDestroy()
+
         if (::yuvConverter.isInitialized) {
             yuvConverter.release()
         }
+
         poseLandmarker?.close()
+        poseLandmarker = null
     }
 }

@@ -14,6 +14,11 @@ class S3UploadService {
   static const String accessKey = "";
   static const String secretKey = "";
 
+  String sanitizeKey(String input) {
+    return input
+        .replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
+  }
+
   static Future<String> uploadCsv({
     required File file,
     required String userId,
@@ -30,7 +35,8 @@ class S3UploadService {
 
     assert(userId.trim().isNotEmpty, 'userId must not be empty');
 
-    final key = "$userId/$sessionId/$exerciseId.csv";
+    final safeExerciseId = exerciseId.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
+    final key = "$userId/$sessionId/$safeExerciseId.csv";
 
     // debug: show which user/session/exercise the file will be uploaded under
     debugPrint("🔧 S3UploadService.uploadCsv -> userId: $userId, sessionId: $sessionId, exerciseId: $exerciseId, key: $key");

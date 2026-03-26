@@ -10,9 +10,9 @@ class PoseDetectionService {
     int rotation,
   ) async {
     try {
-      debugPrint(
-        "📡 Sending to native | w=${image.width} h=${image.height} rot=$rotation",
-      );
+      // debugPrint(
+      //   "📡 Sending to native | w=${image.width} h=${image.height} rot=$rotation",
+      // );
 
       final planes = image.planes;
 

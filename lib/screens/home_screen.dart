@@ -22,7 +22,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final hour = DateTime.now().hour;
 
     if (hour < 12) return "Good Morning";
-    if (hour < 17) return "Good Afternoon";
+    if (hour < 17) return "Good Evening";
     return "Good Evening";
   }
 
@@ -158,72 +158,56 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(height: 18),
 
           GestureDetector(
-            onTap: polarConnected
-                ? () {
-                    showModalBottomSheet(
-                      context: context,
-                      isScrollControlled: true,
-                      backgroundColor:
-                          Colors.transparent,
-                      builder: (_) =>
-                          const AbpSessionOverlay(),
-                    );
-                  }
-                : null,
-            child: Opacity(
-              opacity: polarConnected ? 1.0 : 0.4,
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                    vertical: 22, horizontal: 20),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF121212),
-                  borderRadius:
-                      BorderRadius.circular(18),
-                  border: Border.all(
-                    color: polarConnected
-                        ? Colors.white.withOpacity(0.08)
-                        : Colors.red.withOpacity(0.4),
-                  ),
+            onTap: () {
+              showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                backgroundColor: Colors.transparent,
+                builder: (_) => const AbpSessionOverlay(),
+              );
+            },
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(
+                vertical: 22,
+                horizontal: 20,
+              ),
+              decoration: BoxDecoration(
+                color: const Color(0xFF121212),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: Colors.white.withOpacity(0.08),
                 ),
-                child: Column(
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment:
-                          MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          "Nereus",
-                          style: TextStyle(
-                              fontSize: 18,
-                              color: Colors.white),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: const [
+                      Text(
+                        "Nereus",
+                        style: TextStyle(
+                          fontSize: 18,
+                          color: Colors.white,
                         ),
-                        Icon(
-                          polarConnected
-                              ? Icons.arrow_forward_ios_rounded
-                              : Icons.lock_outline_rounded,
-                          size: 18,
-                          color: Colors.white
-                              .withOpacity(0.6),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      polarConnected
-                          ? "ABP Session"
-                          : "Connect Polar device to start",
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: polarConnected
-                            ? Colors.white60
-                            : Colors.redAccent,
                       ),
+                      Icon(
+                        Icons.arrow_forward_ios_rounded,
+                        size: 18,
+                        color: Colors.white60,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    "ABP Session",
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.white60,
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
