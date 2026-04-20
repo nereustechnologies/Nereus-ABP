@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
+import '../utils/pose_angle_utils.dart';
 import 'abp_session_data.dart';
 import 'abp_models.dart';
 import 'abp_transition_screen.dart';
@@ -218,29 +218,8 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
     }).eq("id", id);
   }
 
-  Future<void> _goToNextStep() async {
-    if (currentStepIndex >= abpSteps.length - 1) {
-      await _completeSession();
-      if (mounted) Navigator.pop(context);
-      return;
-    }
-
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => AbpTransitionScreen(
-          title: "Exercise Complete",
-          message: "Continue when ready.",
-          csvKey: lastUploadedCsvKey,
-        ),
-      ),
-    );
-
-    if (!mounted) return;
-
+  void _resetForCurrentStep() {
     setState(() {
-      currentStepIndex++;
-
       recorder.clear();
       lastPoseTime = null;
 
@@ -255,6 +234,39 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
     });
   }
 
+  Future<void> _goToNextStep() async {
+    if (currentStepIndex >= abpSteps.length - 1) {
+      await _completeSession();
+      if (mounted) Navigator.pop(context);
+      return;
+    }
+
+    final shouldRetry = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AbpTransitionScreen(
+          title: "Exercise Complete",
+          message: "Continue when ready.",
+          csvKey: lastUploadedCsvKey,
+          showRetryButton: true,
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+
+    if (shouldRetry == true) {
+      _resetForCurrentStep();
+      return;
+    }
+
+    setState(() {
+      currentStepIndex++;
+    });
+
+    _resetForCurrentStep();
+  }
+
   Map<String, double> _sanitizeAngles(Map<String, double> angles) {
     final clean = <String, double>{};
 
@@ -262,8 +274,8 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
       final v = entry.value;
 
       if (v.isNaN || v.isInfinite) continue;
-      if (v < 0) continue;
-      if (v > 360) continue;
+      // Keep signed angles (e.g., flexion can be negative).
+      if (v < -360 || v > 360) continue;
 
       clean[entry.key] = v;
     }
@@ -310,6 +322,7 @@ class _AbpSessionRunnerState extends State<AbpSessionRunner> {
               Positioned.fill(
                 child: PoseCameraView(
                   onClose: _pauseSession,
+                  view: step.cameraView ?? CameraView.front,
                   onAngles: (angles) {
                     if (isFinishingStep) return;
                     if (isPaused) return;

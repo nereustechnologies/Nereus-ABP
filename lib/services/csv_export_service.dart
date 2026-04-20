@@ -19,6 +19,11 @@ class CsvExportService {
     }
 
     final firstFrame = frames.first;
+    final angleKeys = <String>{};
+    for (final frame in frames) {
+      angleKeys.addAll(frame.angles.keys);
+    }
+    final orderedAngleKeys = angleKeys.toList();
 
     final headers = [
       "Timestamp",
@@ -26,7 +31,7 @@ class CsvExportService {
       "Exercise Name",
       "Heart Rate",
       "RR Intervals",
-      ...firstFrame.angles.keys,
+      ...orderedAngleKeys,
     ];
 
     List<List<dynamic>> rows = [];
@@ -39,7 +44,7 @@ class CsvExportService {
         frame.exerciseName,
         frame.hr ?? "",
         frame.rr,
-        ...headers.skip(5).map((key) => frame.angles[key] ?? ""),
+        ...orderedAngleKeys.map((key) => frame.angles[key] ?? ""),
       ]);
     }
 

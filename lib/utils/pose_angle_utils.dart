@@ -1,15 +1,68 @@
 import 'dart:math';
 
+// =============================================================================
+// CAMERA VIEW MODE
+// =============================================================================
+
+// =============================================================================
+// ANGLE CONVENTIONS
+// =============================================================================
+//
+//  ELBOW / KNEE  (hinge)
+//    180° = fully extended / straight
+//    0°   = fully flexed
+//
+//  FRONT CAMERA (coronal plane)
+//    SHOULDER ABDUCTION
+//      0°   = arm hanging straight down
+//      90°  = arm out to side (T-pose)
+//      180° = arm straight overhead
+//
+//    HIP ABDUCTION
+//      0°   = leg hanging straight down (standing neutral)
+//      +90° = leg straight out sideways
+//
+//  SIDE CAMERA (sagittal plane)
+//    SHOULDER FLEXION
+//      0°   = arm hanging straight down
+//      +90° = arm pointing straight forward
+//      -90° = arm pointing straight backward
+//
+//    HIP FLEXION
+//      0°   = leg hanging straight down (standing neutral)
+//      +90° = leg raised straight forward
+//      -90° = leg kicked straight backward
+//
+// IMPORTANT:
+// A single "shoulder" or "hip" angle cannot represent both the front-camera
+// and side-camera conventions at the same time. This file returns both the
+// front-plane and side-plane values, and also lets you choose which one should
+// populate the primary "leftShoulder/rightShoulder" and "leftHip/rightHip"
+// keys using [CameraView].
+// =============================================================================
+
+enum CameraView { front, side }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VEC3
+// ─────────────────────────────────────────────────────────────────────────────
+
 class Vec3 {
   final double x, y, z;
+  const Vec3(this.x, this.y, this.z);
 
-  Vec3(this.x, this.y, this.z);
+  Vec3 operator +(Vec3 o) => Vec3(x + o.x, y + o.y, z + o.z);
+  Vec3 operator -(Vec3 o) => Vec3(x - o.x, y - o.y, z - o.z);
+  Vec3 operator *(double s) => Vec3(x * s, y * s, z * s);
+  Vec3 operator -() => Vec3(-x, -y, -z);
 
-  Vec3 operator -(Vec3 other) =>
-      Vec3(x - other.x, y - other.y, z - other.z);
+  double get magnitude => sqrt(x * x + y * y + z * z);
+
+  Vec3 get normalized {
+    final m = magnitude;
+    return m < 1e-9 ? const Vec3(0, 0, 0) : Vec3(x / m, y / m, z / m);
+  }
 }
-
-// ================= VECTOR MATH =================
 
 double dot(Vec3 a, Vec3 b) => a.x * b.x + a.y * b.y + a.z * b.z;
 
@@ -19,209 +72,258 @@ Vec3 cross(Vec3 a, Vec3 b) => Vec3(
       a.x * b.y - a.y * b.x,
     );
 
-double magnitude(Vec3 v) => sqrt(dot(v, v));
-
-Vec3 normalize(Vec3 v) {
-  final mag = magnitude(v);
-  return mag == 0 ? v : Vec3(v.x / mag, v.y / mag, v.z / mag);
+/// Unsigned angle between two vectors, 0–180°
+double angleBetween(Vec3 a, Vec3 b) {
+  final denom = a.magnitude * b.magnitude;
+  if (denom < 1e-9) return 0;
+  return acos((dot(a, b) / denom).clamp(-1.0, 1.0)) * (180 / pi);
 }
 
-// ================= HELPERS =================
-
-Vec3 toVec(Map<String, dynamic> lm) {
-  return Vec3(
-    (lm["x"] as num).toDouble(),
-    (lm["y"] as num).toDouble(),
-    (lm["z"] as num).toDouble(),
-  );
+/// Signed angle from [from] to [to], measured around [axis] (right-hand rule).
+/// Returns -180° to +180°.
+double signedAngle(Vec3 from, Vec3 to, Vec3 axis) {
+  final unsigned = angleBetween(from, to);
+  final c = cross(from, to);
+  final sign = dot(c, axis) < 0 ? -1.0 : 1.0;
+  return sign * unsigned;
 }
 
-// ================= PLANE =================
-
-enum BodyPlane { frontal, sagittal }
-
-BodyPlane detectPlane(List<Map<String, dynamic>> lm) {
-  final l = toVec(lm[11]);
-  final r = toVec(lm[12]);
-
-  final dx = (l.x - r.x).abs();
-  final dz = (l.z - r.z).abs();
-
-  return dx > dz ? BodyPlane.frontal : BodyPlane.sagittal;
+/// Remove the component of [v] along [normal], returning the in-plane part.
+Vec3 projectOntoPlane(Vec3 v, Vec3 normal) {
+  final n = normal.normalized;
+  return v - n * dot(v, n);
 }
 
-// ================= STATE =================
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+Vec3 toVec(Map<String, dynamic> lm) => Vec3(
+      (lm["x"] as num).toDouble(),
+      (lm["y"] as num).toDouble(),
+      (lm["z"] as num).toDouble(),
+    );
+
+Vec3 midpoint(Vec3 a, Vec3 b) => (a + b) * 0.5;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TORSO FRAME
+// ─────────────────────────────────────────────────────────────────────────────
+//
+//  right   → from left shoulder to right shoulder
+//  up      → from hip midpoint to shoulder midpoint (superior)
+//  forward → right × up
+//
+// MediaPipe note: Y increases downward. We build our own anatomical frame from
+// the landmark positions instead of trusting camera axes directly.
+
+class TorsoFrame {
+  final Vec3 forward; // chest direction
+  final Vec3 up;      // head direction
+  final Vec3 right;   // body's right side
+
+  const TorsoFrame(this.forward, this.up, this.right);
+}
+
+TorsoFrame _buildFrame(List<Map<String, dynamic>> lm) {
+  final ls = toVec(lm[11]); // left shoulder
+  final rs = toVec(lm[12]); // right shoulder
+  final lh = toVec(lm[23]); // left hip
+  final rh = toVec(lm[24]); // right hip
+
+  final shoulderMid = midpoint(ls, rs);
+  final hipMid = midpoint(lh, rh);
+
+  final right = (rs - ls).normalized;
+  final up = (shoulderMid - hipMid).normalized;
+  final forwardRaw = cross(right, up).normalized;
+
+  // Ensure forward points "out of chest"
+  final spine = (shoulderMid - hipMid).normalized;
+
+  Vec3 forward = forwardRaw;
+
+  // If forward is pointing backwards, flip it
+  if (dot(forward, spine) < 0) {
+    forward = -forward;
+  }
+
+  return TorsoFrame(forward, up, right);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STATE  (smoothing)
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _State {
-  static BodyPlane? lockedPlane;
-  static final Map<String, double> prevAngles = {};
-  static final Map<String, bool> use2D = {};
+  static TorsoFrame? prevFrame;
+  static final Map<String, double> prevSmooth = {};
 }
 
-// ================= PLANE NORMAL =================
-
-Vec3 getPlaneNormal(List<Map<String, dynamic>> lm, BodyPlane plane) {
-  final lShoulder = toVec(lm[11]);
-  final rShoulder = toVec(lm[12]);
-  final lHip = toVec(lm[23]);
-
-  final shoulderVec = rShoulder - lShoulder;
-  final hipVec = lHip - lShoulder;
-
-  final torsoNormal = normalize(cross(shoulderVec, hipVec));
-
-  if (plane == BodyPlane.frontal) return torsoNormal;
-
-  return normalize(cross(torsoNormal, Vec3(0, 1, 0)));
-}
-
-// ================= PROJECTION =================
-
-Vec3 projectOntoPlane(Vec3 v, Vec3 normal) {
-  final n = normalize(normal);
-  final projection = dot(v, n);
-
-  return Vec3(
-    v.x - projection * n.x,
-    v.y - projection * n.y,
-    v.z - projection * n.z,
-  );
-}
-
-// ================= ANGLES =================
-
-double angleOnPlane(Vec3 a, Vec3 b, Vec3 normal) {
-  final aProj = projectOntoPlane(a, normal);
-  final bProj = projectOntoPlane(b, normal);
-
-  final d = dot(aProj, bProj).clamp(-1.0, 1.0);
-  final c = cross(aProj, bProj);
-
-  return atan2(magnitude(c), d) * (180 / pi);
-}
-
-double angle2D(Vec3 a, Vec3 b) {
-  final dotVal = a.x * b.x + a.y * b.y;
-  final mag =
-      sqrt(a.x * a.x + a.y * a.y) * sqrt(b.x * b.x + b.y * b.y);
-
-  if (mag == 0) return 0;
-
-  return acos((dotVal / mag).clamp(-1.0, 1.0)) * (180 / pi);
-}
-
-// ================= SAFE ANGLE (HYSTERESIS) =================
-
-double safeAngle(String key, Vec3 v1, Vec3 v2, Vec3 normal) {
-  final angle3D = angleOnPlane(v1, v2, normal);
-  final angle2d = angle2D(v1, v2);
-
-  final use2D = _State.use2D[key] ?? false;
-
-  // ENTER 2D mode
-  if (!use2D && (angle3D > 170 || angle3D < 10)) {
-    _State.use2D[key] = true;
-    return angle2d;
+TorsoFrame _smoothFrame(TorsoFrame cur) {
+  final prev = _State.prevFrame;
+  if (prev == null) {
+    _State.prevFrame = cur;
+    return cur;
   }
 
-  // EXIT 2D mode
-  if (use2D && (angle3D < 150 && angle3D > 30)) {
-    _State.use2D[key] = false;
-    return angle3D;
-  }
+  Vec3 lerp(Vec3 a, Vec3 b) => Vec3(
+        0.8 * a.x + 0.2 * b.x,
+        0.8 * a.y + 0.2 * b.y,
+        0.8 * a.z + 0.2 * b.z,
+      ).normalized;
 
-  return use2D ? angle2d : angle3D;
+  final forward = lerp(prev.forward, cur.forward);
+  final up = lerp(prev.up, cur.up);
+
+  // Keep the frame orthogonal. Since forward = right × up, we recover
+  // right = up × forward (not forward × up).
+  final rightFinal = cross(up, forward).normalized;
+
+  _State.prevFrame = TorsoFrame(forward, up, rightFinal);
+  return _State.prevFrame!;
 }
 
-// ================= PURE 3D (for knees/elbows) =================
-
-double pure3DAngle(Vec3 v1, Vec3 v2) {
-  final d = dot(v1, v2);
-  final mag = magnitude(v1) * magnitude(v2);
-
-  if (mag == 0) return 0;
-
-  return acos((d / mag).clamp(-1.0, 1.0)) * (180 / pi);
+double _smooth(String key, double value, {double alpha = 0.35}) {
+  final prev = _State.prevSmooth[key] ?? value;
+  final s = (1 - alpha) * prev + alpha * value;
+  _State.prevSmooth[key] = s;
+  return s;
 }
 
-// ================= SMOOTHING =================
+// ─────────────────────────────────────────────────────────────────────────────
+// JOINT CALCULATIONS
+// ─────────────────────────────────────────────────────────────────────────────
 
-double smooth(String key, double value) {
-  final prev = _State.prevAngles[key] ?? value;
-
-  final smoothed = 0.8 * prev + 0.2 * value;
-
-  _State.prevAngles[key] = smoothed;
-  return smoothed;
+/// Hinge angle at [joint] between segments [proximal]→[joint] and
+/// [joint]→[distal].
+/// 180° = straight, 0° = fully flexed.
+double _hingeAngle(Vec3 proximal, Vec3 joint, Vec3 distal) {
+  final v1 = (proximal - joint).normalized;
+  final v2 = (distal - joint).normalized;
+  return angleBetween(v1, v2);
 }
 
-// ================= DEADZONE =================
-
-double stabilize(String key, double value) {
-  final prev = _State.prevAngles[key] ?? value;
-
-  if ((value - prev).abs() < 2) return prev;
-
-  return value;
+/// FRONT CAMERA: Shoulder abduction in the coronal plane.
+/// 0 = down, 90 = T-pose, 180 = overhead.
+double _shoulderAbduction(Vec3 armVec, TorsoFrame f) {
+  final inPlane = projectOntoPlane(armVec, f.forward);
+  final down = -f.up;
+  return angleBetween(down, inPlane);
 }
 
-// ================= MAIN =================
+/// SIDE CAMERA: Shoulder flexion in the sagittal plane.
+/// 0 = down, +90 = forward, -90 = backward.
+double _shoulderFlexion(Vec3 armVec, TorsoFrame f) {
+  final inPlane = projectOntoPlane(armVec, f.right);
+  final down = -f.up;
+  return signedAngle(down, inPlane, -f.right);
+}
+
+/// FRONT CAMERA: Hip abduction in the coronal plane.
+/// 0 = neutral, ~90 = full side split.
+double _hipAbduction(Vec3 thighVec, TorsoFrame f) {
+  final inPlane = projectOntoPlane(thighVec, f.forward);
+  final down = -f.up;
+  return angleBetween(down, inPlane);
+}
+
+/// SIDE CAMERA: Hip flexion in the sagittal plane.
+/// 0 = neutral, +90 = forward, -90 = backward.
+double _hipFlexion(Vec3 thighVec, TorsoFrame f) {
+  final inPlane = projectOntoPlane(thighVec, f.right);
+  final down = -f.up;
+  return signedAngle(down, inPlane, f.right);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PUBLIC API
+// ─────────────────────────────────────────────────────────────────────────────
 
 class PoseAngleUtils {
+  /// Returns a map of joint angles from MediaPipe Pose landmarks (33 points).
+  ///
+  /// Primary keys depend on [view]:
+  ///   front -> shoulder/hip abduction
+  ///   side  -> shoulder/hip flexion
+  ///
+  /// Extra keys are always returned:
+  ///   leftShoulderAbduct / rightShoulderAbduct
+  ///   leftShoulderFlex   / rightShoulderFlex
+  ///   leftHipAbduct      / rightHipAbduct
+  ///   leftHipFlex        / rightHipFlex
   static Map<String, double> calculateAllAngles(
-      List<Map<String, dynamic>> lm) {
+    List<Map<String, dynamic>> lm, {
+    CameraView view = CameraView.front,
+  }) {
     if (lm.length < 33) return {};
 
     Vec3 p(int i) => toVec(lm[i]);
 
-    // 🔥 LOCK PLANE
-    _State.lockedPlane ??= detectPlane(lm);
-    final plane = _State.lockedPlane!;
+    final frame = _smoothFrame(_buildFrame(lm));
+    final viewKey = view == CameraView.front ? 'front' : 'side';
 
-    final normal = getPlaneNormal(lm, plane);
+    // Arm vectors (shoulder → elbow)
+    final lArm = p(13) - p(11);
+    final rArm = p(14) - p(12);
 
-    double joint(String key, int a, int b, int c) {
-      final v1 = p(a) - p(b);
-      final v2 = p(c) - p(b);
+    // Thigh vectors (hip → knee)
+    final lThigh = p(25) - p(23);
+    final rThigh = p(26) - p(24);
 
-      final angle = safeAngle(key, v1, v2, normal);
-      final stable = stabilize(key, angle);
-      return smooth(key, stable);
-    }
+    final lShoulderAbd = _shoulderAbduction(lArm, frame);
+    final rShoulderAbd = _shoulderAbduction(rArm, frame);
+    final lShoulderFlex = _shoulderFlexion(lArm, frame);
+    final rShoulderFlex = _shoulderFlexion(rArm, frame);
 
-    double knee(String key, int a, int b, int c) {
-      final v1 = p(a) - p(b);
-      final v2 = p(c) - p(b);
-
-      final angle = pure3DAngle(v1, v2);
-      final stable = stabilize(key, angle);
-      return smooth(key, stable);
-    }
+    final lHipAbd = _hipAbduction(lThigh, frame);
+    final rHipAbd = _hipAbduction(rThigh, frame);
+    final lHipFlex = _hipFlexion(lThigh, frame);
+    final rHipFlex = _hipFlexion(rThigh, frame);
 
     return {
-      "leftElbow": smooth("leftElbow",
-          pure3DAngle(p(11) - p(13), p(15) - p(13))),
-      "rightElbow": smooth("rightElbow",
-          pure3DAngle(p(12) - p(14), p(16) - p(14))),
+      // Hinges
+      'leftElbow': _smooth('lElbow', _hingeAngle(p(11), p(13), p(15)), alpha: 0.6),
+      'rightElbow': _smooth('rElbow', _hingeAngle(p(12), p(14), p(16)), alpha: 0.6),
+      'leftKnee': _smooth('lKnee', _hingeAngle(p(23), p(25), p(27)), alpha: 0.6),
+      'rightKnee': _smooth('rKnee', _hingeAngle(p(24), p(26), p(28)), alpha: 0.6),
 
-      "leftShoulder": joint("leftShoulder", 13, 11, 23),
-      "rightShoulder": joint("rightShoulder", 14, 12, 24),
+      // Primary display values - choose based on camera view
+      'leftShoulder': _smooth(
+        'lShoulder_$viewKey',
+        view == CameraView.front ? lShoulderAbd : lShoulderFlex,
+      ),
+      'rightShoulder': _smooth(
+        'rShoulder_$viewKey',
+        view == CameraView.front ? rShoulderAbd : rShoulderFlex,
+      ),
+      'leftHip': _smooth(
+        'lHip_$viewKey',
+        view == CameraView.front ? lHipAbd : lHipFlex,
+      ),
+      'rightHip': _smooth(
+        'rHip_$viewKey',
+        view == CameraView.front ? rHipAbd : rHipFlex,
+      ),
 
-      "leftHip": joint("leftHip", 11, 23, 25),
-      "rightHip": joint("rightHip", 12, 24, 26),
+      // Always-available breakdown values
+      'leftShoulderAbduct': _smooth('lSAbd', lShoulderAbd),
+      'rightShoulderAbduct': _smooth('rSAbd', rShoulderAbd),
+      'leftShoulderFlex': _smooth('lSFlex', lShoulderFlex),
+      'rightShoulderFlex': _smooth('rSFlex', rShoulderFlex),
 
-      // 🔥 FIXED KNEES (PURE 3D)
-      "leftKnee": knee("leftKnee", 23, 25, 27),
-      "rightKnee": knee("rightKnee", 24, 26, 28),
+      'leftHipAbduct': _smooth('lHAbd', lHipAbd),
+      'rightHipAbduct': _smooth('rHAbd', rHipAbd),
+      'leftHipFlex': _smooth('lHFlex', lHipFlex),
+      'rightHipFlex': _smooth('rHFlex', rHipFlex),
 
-      "leftAnkle": joint("leftAnkle", 25, 27, 31),
-      "rightAnkle": joint("rightAnkle", 26, 28, 32),
+      'leftAnkle': _smooth('lAnkle', _hingeAngle(p(25), p(27), p(31)), alpha: 0.6),
+      'rightAnkle': _smooth('rAnkle', _hingeAngle(p(26), p(28), p(32)), alpha: 0.6),
     };
   }
 
   static void reset() {
-    _State.lockedPlane = null;
-    _State.prevAngles.clear();
-    _State.use2D.clear();
+    _State.prevFrame = null;
+    _State.prevSmooth.clear();
   }
 }

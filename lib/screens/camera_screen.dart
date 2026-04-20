@@ -23,8 +23,14 @@ class CameraScreen extends StatelessWidget {
 class PoseCameraView extends StatefulWidget {
   final VoidCallback? onClose;
   final Function(Map<String, double>)? onAngles;
+  final CameraView view;
 
-  const PoseCameraView({super.key, this.onClose, this.onAngles});
+  const PoseCameraView({
+    super.key,
+    this.onClose,
+    this.onAngles,
+    this.view = CameraView.front,
+  });
 
   @override
   State<PoseCameraView> createState() => _PoseCameraViewState();
@@ -102,7 +108,7 @@ class _PoseCameraViewState extends State<PoseCameraView> {
       final now = DateTime.now();
 
       // throttle to ~10 FPS
-      if (now.difference(_lastFrameTime).inMilliseconds < 80) {
+      if (now.difference(_lastFrameTime).inMilliseconds < 16) {
         return;
       }
       _lastFrameTime = now;
@@ -120,7 +126,10 @@ class _PoseCameraViewState extends State<PoseCameraView> {
           return;
         }
         
-        final angles = PoseAngleUtils.calculateAllAngles(landmarks);
+        final angles = PoseAngleUtils.calculateAllAngles(
+          landmarks,
+          view: widget.view,
+        );
 
         if (!mounted || _isClosing) {
           _isDetecting = false;

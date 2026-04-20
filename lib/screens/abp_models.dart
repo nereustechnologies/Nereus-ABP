@@ -1,3 +1,5 @@
+import '../utils/pose_angle_utils.dart';
+
 enum AbpStepType {
   infoOnly,
   cameraExercise,
@@ -9,6 +11,7 @@ class AbpStep {
   final String exerciseName;
   final String instructions;
   final AbpStepType type;
+  final CameraView? cameraView;
 
   final int countdownSeconds;
   final int durationSeconds;
@@ -18,6 +21,7 @@ class AbpStep {
     required this.exerciseName,
     required this.instructions,
     required this.type,
+    this.cameraView,
     this.countdownSeconds = 5,
     this.durationSeconds = 30,
   });

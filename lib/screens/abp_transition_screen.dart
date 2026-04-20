@@ -6,12 +6,14 @@ class AbpTransitionScreen extends StatefulWidget {
   final String title;
   final String message;
   final String? csvKey;
+  final bool showRetryButton;
 
   const AbpTransitionScreen({
     super.key,
     this.title = "Block Complete",
     this.message = "Take a breath. Continue when ready.",
     this.csvKey,
+    this.showRetryButton = false,
   });
 
   @override
@@ -117,6 +119,33 @@ class _AbpTransitionScreenState extends State<AbpTransitionScreen> {
 
               if (hasCsv) const SizedBox(height: 14),
 
+              if (widget.showRetryButton) ...[
+                SizedBox(
+                  width: double.infinity,
+                  height: 55,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white12,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    onPressed: () {
+                      Navigator.pop(context, true);
+                    },
+                    child: const Text(
+                      "Retry",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
+
               SizedBox(
                 width: double.infinity,
                 height: 55,
@@ -128,7 +157,7 @@ class _AbpTransitionScreenState extends State<AbpTransitionScreen> {
                     ),
                   ),
                   onPressed: () {
-                    Navigator.pop(context);
+                    Navigator.pop(context, false);
                   },
                   child: const Text(
                     "Continue",
