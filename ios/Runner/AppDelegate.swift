@@ -120,7 +120,7 @@ import CoreImage
           let centerX = (pose[11].x + pose[12].x + pose[23].x + pose[24].x) / 4.0
           let centerY = (pose[11].y + pose[12].y + pose[23].y + pose[24].y) / 4.0
 
-          let center = CGPoint(x: centerX, y: centerY)
+          let center = CGPoint(x: CGFloat(centerX), y: CGFloat(centerY))
 
           // 🔥 Identity lock
           if !self.isSamePerson(center) {
