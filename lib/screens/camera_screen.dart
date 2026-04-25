@@ -7,14 +7,105 @@ import '../utils/pose_painter.dart';
 import '../utils/pose_angle_utils.dart';
 
 /// FULL SCREEN PAGE (used in HomeScreen bottom nav)
-class CameraScreen extends StatelessWidget {
+class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
 
   @override
+  State<CameraScreen> createState() => _CameraScreenState();
+}
+
+class _CameraScreenState extends State<CameraScreen> {
+  CameraView _selectedView = CameraView.front;
+
+  @override
   Widget build(BuildContext context) {
-    return const Scaffold(
+    return Scaffold(
       backgroundColor: Colors.black,
-      body: PoseCameraView(),
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: PoseCameraView(view: _selectedView),
+          ),
+          Positioned(
+            left: 20,
+            right: 20,
+            bottom: 28,
+            child: SafeArea(
+              top: false,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _ViewModeButton(
+                      label: 'Front View',
+                      isSelected: _selectedView == CameraView.front,
+                      onTap: () {
+                        if (_selectedView == CameraView.front) return;
+                        setState(() {
+                          _selectedView = CameraView.front;
+                        });
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _ViewModeButton(
+                      label: 'Side View',
+                      isSelected: _selectedView == CameraView.side,
+                      onTap: () {
+                        if (_selectedView == CameraView.side) return;
+                        setState(() {
+                          _selectedView = CameraView.side;
+                        });
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ViewModeButton extends StatelessWidget {
+  final String label;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _ViewModeButton({
+    required this.label,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? Colors.blueAccent.withOpacity(0.9)
+              : Colors.black.withOpacity(0.55),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected ? Colors.blueAccent : Colors.white24,
+          ),
+        ),
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 15,
+            fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+          ),
+        ),
+      ),
     );
   }
 }
@@ -63,6 +154,18 @@ class _PoseCameraViewState extends State<PoseCameraView> {
     debugPrint("📷 PoseCameraView init");
     PoseAngleUtils.reset();
     _initializeCamera();
+  }
+
+  @override
+  void didUpdateWidget(covariant PoseCameraView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.view != widget.view) {
+      PoseAngleUtils.reset();
+      setState(() {
+        _angles = {};
+      });
+    }
   }
 
   Future<void> _initializeCamera() async {

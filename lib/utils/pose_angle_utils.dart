@@ -134,19 +134,13 @@ TorsoFrame _buildFrame(List<Map<String, dynamic>> lm) {
   final shoulderMid = midpoint(ls, rs);
   final hipMid = midpoint(lh, rh);
 
-  final right = (rs - ls).normalized;
+  final shoulderRight = (rs - ls).normalized;
+  final hipRight = (rh - lh).normalized;
+  final blendedRight = shoulderRight + hipRight;
+  final right =
+      (blendedRight.magnitude < 1e-9 ? shoulderRight : blendedRight).normalized;
   final up = (shoulderMid - hipMid).normalized;
-  final forwardRaw = cross(right, up).normalized;
-
-  // Ensure forward points "out of chest"
-  final spine = (shoulderMid - hipMid).normalized;
-
-  Vec3 forward = forwardRaw;
-
-  // If forward is pointing backwards, flip it
-  if (dot(forward, spine) < 0) {
-    forward = -forward;
-  }
+  final forward = cross(right, up).normalized;
 
   return TorsoFrame(forward, up, right);
 }
@@ -167,18 +161,34 @@ TorsoFrame _smoothFrame(TorsoFrame cur) {
     return cur;
   }
 
+  var alignedCur = cur;
+
+  if (dot(prev.right, alignedCur.right) < 0 ||
+      dot(prev.forward, alignedCur.forward) < 0) {
+    alignedCur = TorsoFrame(
+      -alignedCur.forward,
+      alignedCur.up,
+      -alignedCur.right,
+    );
+  }
+
   Vec3 lerp(Vec3 a, Vec3 b) => Vec3(
         0.8 * a.x + 0.2 * b.x,
         0.8 * a.y + 0.2 * b.y,
         0.8 * a.z + 0.2 * b.z,
       ).normalized;
 
-  final forward = lerp(prev.forward, cur.forward);
-  final up = lerp(prev.up, cur.up);
+  var forward = lerp(prev.forward, alignedCur.forward);
+  final up = lerp(prev.up, alignedCur.up);
 
   // Keep the frame orthogonal. Since forward = right × up, we recover
   // right = up × forward (not forward × up).
-  final rightFinal = cross(up, forward).normalized;
+  var rightFinal = cross(up, forward).normalized;
+
+  if (dot(prev.right, rightFinal) < 0) {
+    forward = -forward;
+    rightFinal = -rightFinal;
+  }
 
   _State.prevFrame = TorsoFrame(forward, up, rightFinal);
   return _State.prevFrame!;
@@ -213,11 +223,25 @@ double _shoulderAbduction(Vec3 armVec, TorsoFrame f) {
 }
 
 /// SIDE CAMERA: Shoulder flexion in the sagittal plane.
-/// 0 = down, +90 = forward, -90 = backward.
-double _shoulderFlexion(Vec3 armVec, TorsoFrame f) {
-  final inPlane = projectOntoPlane(armVec, f.right);
-  final down = -f.up;
-  return signedAngle(down, inPlane, -f.right);
+/// Uses the local shoulder->hip trunk line instead of the torso midpoint frame,
+/// which is more stable in side-view tasks like push-ups where the far-side
+/// landmarks are often partially occluded.
+///
+/// 0 = arm alongside trunk
+/// +90 = arm perpendicular in front of trunk
+/// -90 = arm perpendicular behind trunk
+double _shoulderFlexion(Vec3 shoulder, Vec3 elbow, Vec3 hip, TorsoFrame f) {
+  final armVec = (elbow - shoulder).normalized;
+  final trunkDown = (hip - shoulder).normalized;
+
+  final armSagittal = projectOntoPlane(armVec, f.right);
+  final trunkSagittal = projectOntoPlane(trunkDown, f.right);
+
+  if (armSagittal.magnitude < 1e-9 || trunkSagittal.magnitude < 1e-9) {
+    return 0;
+  }
+
+  return signedAngle(trunkSagittal, armSagittal, f.right);
 }
 
 /// FRONT CAMERA: Hip abduction in the coronal plane.
@@ -273,8 +297,8 @@ class PoseAngleUtils {
 
     final lShoulderAbd = _shoulderAbduction(lArm, frame);
     final rShoulderAbd = _shoulderAbduction(rArm, frame);
-    final lShoulderFlex = _shoulderFlexion(lArm, frame);
-    final rShoulderFlex = _shoulderFlexion(rArm, frame);
+    final lShoulderFlex = _shoulderFlexion(p(11), p(13), p(23), frame);
+    final rShoulderFlex = _shoulderFlexion(p(12), p(14), p(24), frame);
 
     final lHipAbd = _hipAbduction(lThigh, frame);
     final rHipAbd = _hipAbduction(rThigh, frame);
